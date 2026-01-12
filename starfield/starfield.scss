@@ -1,0 +1,168 @@
+@import "compass";
+
+/* Star colors */
+$star-colors: (
+  #ffb3f3, #ff69b4, #c71585, #8a2be2, #7b68ee,
+  #00bfff, #add8e6, #ffffff, #ff80c0, #ff4da6,
+  #ff3399, #ff99ff, #ffccff, #ff66ff, #ff99cc,
+  #ffcce5, #ffb6e6, #ffd6f0
+);
+
+@function random-color() {
+  @return nth($star-colors, random(length($star-colors)));
+}
+
+/* Generate many stars via box-shadow */
+@function multiple-box-shadow($n) {
+  $x: (random(10000) - 1) / 100 * 1vw;
+  $y: random(2000) * 1px;
+  $value: "#{$x} #{$y} #{random-color()}";
+
+  @for $i from 2 through $n {
+    $x: (random(10000) - 1) / 100 * 1vw;
+    $y: random(2000) * 1px;
+    $value: "#{$value}, #{$x} #{$y} #{random-color()}";
+  }
+
+  @return unquote($value);
+}
+
+/* Density presets */
+$densities: (
+  small: (700, 300, 200, 150, 100),
+  medium: (900, 400, 300, 200, 150),
+  large: (1200, 600, 400, 300, 200),
+  ultra: (1600, 900, 600, 450, 300)
+);
+
+@mixin star-densities($set) {
+  $l1: nth($set, 1);
+  $l2: nth($set, 2);
+  $l3: nth($set, 3);
+  $l4: nth($set, 4);
+  $l5: nth($set, 5);
+
+  #stars1, #stars1::after { box-shadow: multiple-box-shadow($l1); }
+  #stars2, #stars2::after { box-shadow: multiple-box-shadow($l2); }
+  #stars3, #stars3::after { box-shadow: multiple-box-shadow($l3); }
+  #stars4, #stars4::after { box-shadow: multiple-box-shadow($l4); }
+  #stars5, #stars5::after { box-shadow: multiple-box-shadow($l5); }
+}
+
+/* Base */
+html {
+  height: 100%;
+  background: #140e38;
+}
+
+#starfield {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Vertical star conveyor animations */
+@keyframes animStar-up {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  1%   { opacity: 1; }
+  99%  { opacity: 1; }
+  100% { transform: translate3d(0, calc(-1 * var(--travel)), 0); opacity: 0; }
+}
+
+@keyframes animStar-down {
+  0%   { transform: translate3d(0, calc(-1 * var(--travel)), 0); opacity: 0; }
+  1%   { opacity: 1; }
+  99%  { opacity: 1; }
+  100% { transform: translate3d(0, 0, 0); opacity: 0; }
+}
+
+/* Shared star layer base */
+#stars1, #stars2, #stars3, #stars4, #stars5 {
+  --travel: 200vh;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  will-change: transform;
+}
+
+/* Layer 1 */
+#stars1 {
+  width: 2px; height: 2px;
+  animation: animStar-up 180s linear infinite;
+}
+#stars1::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--travel) - 2px);
+  width: 2px; height: 2px;
+}
+
+/* Layer 2 */
+#stars2 {
+  width: 3px; height: 3px;
+  animation: animStar-up 400s linear infinite;
+}
+#stars2::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--travel) - 2px);
+  width: 3px; height: 3px;
+}
+
+/* Layer 3 */
+#stars3 {
+  width: 4px; height: 4px;
+  animation: animStar-up 800s linear infinite;
+}
+#stars3::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--travel) - 2px);
+  width: 4px; height: 4px;
+}
+
+/* Layer 4 */
+#stars4 {
+  width: 5px; height: 5px;
+  animation: animStar-down 2000s linear infinite;
+}
+#stars4::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--travel) - 2px);
+  width: 5px; height: 5px;
+}
+
+/* Layer 5 */
+#stars5 {
+  width: 7px; height: 7px;
+  animation: animStar-down 500s linear infinite;
+}
+#stars5::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--travel) - 2px);
+  width: 7px; height: 7px;
+}
+
+/* Responsive densities */
+@media (max-width: 600px) {
+  @include star-densities(map-get($densities, small));
+}
+
+@media (min-width: 601px) and (max-width: 1400px) {
+  @include star-densities(map-get($densities, small));
+}
+
+@media (min-width: 1401px) and (max-width: 2200px) {
+  @include star-densities(map-get($densities, medium));
+}
+
+@media (min-width: 2201px) {
+  @include star-densities(map-get($densities, large));
+}
