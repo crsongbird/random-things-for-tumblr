@@ -49,10 +49,11 @@ document.addEventListener("DOMContentLoaded", () => {
   resizeCanvas();
 
   /* ---------------------------------------------------------
-     STAR STORAGE (SIMD)
+     STAR STORAGE (SoA with typed arrays + prev state)
   --------------------------------------------------------- */
   let count = 0;
   let xs, ys, vxs, vys, axs, ays, sizes, speeds, colorIndexes;
+  let xsPrev, ysPrev;
   let colorBuckets = [];
 
   function randomColorIndex() {
@@ -82,10 +83,19 @@ document.addEventListener("DOMContentLoaded", () => {
     speeds = new Float32Array(count);
     colorIndexes = new Uint8Array(count);
 
+    xsPrev = new Float32Array(count);
+    ysPrev = new Float32Array(count);
+
     const colorCount = CFG.colors.length;
-    colorBuckets = new Array(colorCount);
-    for (let c = 0; c < colorCount; c++) {
-      colorBuckets[c] = [];
+    if (!colorBuckets.length) {
+      colorBuckets = new Array(colorCount);
+      for (let c = 0; c < colorCount; c++) {
+        colorBuckets[c] = [];
+      }
+    } else {
+      for (let c = 0; c < colorCount; c++) {
+        colorBuckets[c].length = 0;
+      }
     }
 
     for (let i = 0; i < count; i++) {
@@ -94,8 +104,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const speed = Math.abs(base) < 0.033 ? (base < 0 ? -0.033 : 0.033) : base;
       const ci = randomColorIndex();
 
-      xs[i] = Math.random() * W;
-      ys[i] = Math.random() * H;
+      const x = Math.random() * W;
+      const y = Math.random() * H;
+
+      xs[i] = x;
+      ys[i] = y;
       vxs[i] = 0;
       vys[i] = speed;
       axs[i] = 0;
@@ -104,6 +117,10 @@ document.addEventListener("DOMContentLoaded", () => {
       speeds[i] = speed;
       colorIndexes[i] = ci;
       colorBuckets[ci].push(i);
+
+      // initialize previous positions to current so we don't interpolate from zero
+      xsPrev[i] = x;
+      ysPrev[i] = y;
     }
   }
 
@@ -145,20 +162,20 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("mousedown", () => {
     const now = performance.now();
     mouse.pulse = true;
-    mouse.pulseEnd = now + 250;
+    mouse.pulseEnd = now + 350;
   });
 
   /* ---------------------------------------------------------
      FIXED TIMESTEP
   --------------------------------------------------------- */
   const STEP_MS = 1000 / 60; // fixed 60 Hz
-  const MAX_FRAME_MS = 1000 / 30;
+  const MAX_FRAME_MS = 1000 / 20;
 
   let accumulator = 0;
   let lastTime = performance.now();
 
   /* ---------------------------------------------------------
-     UPDATE
+     UPDATE (fixed timestep, tuned for 60 FPS)
   --------------------------------------------------------- */
   function updateFixed() {
     const nowMs = performance.now();
@@ -190,7 +207,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const uy = dy * invDist;
 
         // Corrected falloff:
-        // fall = 1 / (dist * (dist * 0.00025 + 0.05) + 1);
         const fall = 1 / (dist * (dist * 0.00025 + 0.05) + 1);
         const force = 0.05 * fall;
         const dir = mouse.pulse ? -1 : attract ? 1 : 0;
@@ -225,11 +241,29 @@ document.addEventListener("DOMContentLoaded", () => {
       y += vy;
 
       // Wrap
-      if (y < -buf) y = H + buf;
-      else if (y > H + buf) y = -buf;
+      let wrapped = false;
 
-      if (x < -buf) x = W + buf;
-      else if (x > W + buf) x = -buf;
+      if (y < -buf) {
+        y = H + buf;
+        wrapped = true;
+      } else if (y > H + buf) {
+        y = -buf;
+        wrapped = true;
+      }
+
+      if (x < -buf) {
+        x = W + buf;
+        wrapped = true;
+      } else if (x > W + buf) {
+        x = -buf;
+        wrapped = true;
+      }
+
+      // If the star teleported, sync prev state to avoid interpolation streaks
+      if (wrapped) {
+        xsPrev[i] = x;
+        ysPrev[i] = y;
+      }
 
       xs[i] = x;
       ys[i] = y;
@@ -241,9 +275,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* ---------------------------------------------------------
-     RENDER
+     RENDER (interpolated positions, batched by color)
   --------------------------------------------------------- */
-  function render() {
+  function render(alpha) {
     ctx.clearRect(0, 0, W, H);
 
     const colors = CFG.colors;
@@ -255,16 +289,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
       ctx.fillStyle = colors[c];
 
-      // batching draw calls for speedup
       for (let j = 0; j < group.length; j++) {
         const i = group[j];
-        ctx.fillRect(xs[i], ys[i], sizes[i], sizes[i]);
+
+        const xPrev = xsPrev[i];
+        const yPrev = ysPrev[i];
+        const xCurr = xs[i];
+        const yCurr = ys[i];
+
+        const x = xPrev + alpha * (xCurr - xPrev);
+        const y = yPrev + alpha * (yCurr - yPrev);
+
+        ctx.fillRect(x, y, sizes[i], sizes[i]);
       }
     }
   }
 
   /* ---------------------------------------------------------
-     MAIN LOOP (with timesteps)
+     MAIN LOOP (variable render, fixed update, interpolated)
   --------------------------------------------------------- */
   function loop(now) {
     let frameTime = now - lastTime;
@@ -274,11 +316,17 @@ document.addEventListener("DOMContentLoaded", () => {
     accumulator += frameTime;
 
     while (accumulator >= STEP_MS) {
+      // Store previous positions BEFORE advancing physics
+      xsPrev.set(xs);
+      ysPrev.set(ys);
+
       updateFixed();
       accumulator -= STEP_MS;
     }
 
-    render();
+    const alpha = accumulator / STEP_MS;
+    render(alpha);
+
     requestAnimationFrame(loop);
   }
 
