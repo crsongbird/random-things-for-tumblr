@@ -1,303 +1,286 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const canvas = document.getElementById("starfield-canvas");
-  const ctx = canvas.getContext("2d");
-  let pulseActive = false;
-  let pulseEndTime = 0;
+  /* ---------------------------------------------------------
+     CONFIG
+  --------------------------------------------------------- */
+  const CFG = {
+    density: 0.0005,
+    inactivityMs: 250,
+    buffer: 20,
+    colors: [
+      "#ffb3f3",
+      "#ff69b4",
+      "#c71585",
+      "#8a2be2",
+      "#7b68ee",
+      "#00bfff",
+      "#add8e6",
+      "#ffffff",
+      "#ff80c0",
+      "#ff4da6",
+      "#ff3399",
+      "#ff99ff",
+      "#ffccff",
+      "#ff66ff",
+      "#ff99cc",
+      "#ffcce5",
+      "#ffb6e6",
+      "#ffd6f0"
+    ]
+  };
 
   /* ---------------------------------------------------------
-     HIGH-DPI CANVAS SETUP
-     Ensures crisp rendering on Retina / high-DPI displays.
+     CANVAS SETUP
   --------------------------------------------------------- */
-  function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
+  const canvas = document.getElementById("starfield-canvas");
+  const ctx = canvas.getContext("2d");
 
-    // Reset transform before scaling (important!)
+  let W = innerWidth;
+  let H = innerHeight;
+
+  function resizeCanvas() {
+    W = innerWidth;
+    H = innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  resize();
+  resizeCanvas();
 
   /* ---------------------------------------------------------
-     COLOR PALETTE
-     Soft neon/pastel star colors.
+     STAR STORAGE (SIMD)
   --------------------------------------------------------- */
-  const colors = [
-    "#ffb3f3",
-    "#ff69b4",
-    "#c71585",
-    "#8a2be2",
-    "#7b68ee",
-    "#00bfff",
-    "#add8e6",
-    "#ffffff",
-    "#ff80c0",
-    "#ff4da6",
-    "#ff3399",
-    "#ff99ff",
-    "#ffccff",
-    "#ff66ff",
-    "#ff99cc",
-    "#ffcce5",
-    "#ffb6e6",
-    "#ffd6f0"
-  ];
+  let count = 0;
+  let xs, ys, vxs, vys, axs, ays, sizes, speeds, colorIndexes;
+  let colorBuckets = [];
 
-  function randomColor() {
-    return colors[Math.floor(Math.random() * colors.length)];
+  function randomColorIndex() {
+    const len = CFG.colors.length;
+    return (Math.random() * len) | 0;
   }
 
-  /* ---------------------------------------------------------
-     RESPONSIVE STAR COUNT
-     Density scales with screen area.
-  --------------------------------------------------------- */
-  function computeStarCount() {
-    const area = window.innerWidth * window.innerHeight;
-    const density = 0.0005;
-    return Math.floor(area * density);
-  }
-
-  /* ---------------------------------------------------------
-     SIZE DISTRIBUTION (biased)
-     60% tiny, 30% medium, 10% large.
-  --------------------------------------------------------- */
   function biasedSize() {
     const r = Math.random();
-    if (r < 0.6) return 1 + Math.random() * 3;
-    if (r < 0.9) return 4 + Math.random() * 3;
-    return 7 + Math.random() * 3;
+    return r < 0.6
+      ? 1 + Math.random() * 3
+      : r < 0.9
+      ? 4 + Math.random() * 3
+      : 7 + Math.random() * 3;
   }
-
-  /* ---------------------------------------------------------
-     STAR GENERATOR
-     Each star has:
-     - natural vertical speed
-     - attraction force accumulator (ax/ay)
-     - velocity (vx/vy)
-  --------------------------------------------------------- */
-  function generateStar() {
-    const size = biasedSize();
-    const breakPoint = 6.5;
-
-    // Map size → vertical speed
-    let speed = (size - breakPoint) * 0.05;
-    if (Math.abs(speed) < 0.033) {
-      speed = speed < 0 ? -0.033 : 0.033;
-    }
-
-    return {
-      x: Math.random() * window.innerWidth,
-      y: Math.random() * window.innerHeight,
-      size,
-      speed,
-      color: randomColor(),
-
-      // Attraction force accumulator
-      ax: 0,
-      ay: 0,
-
-      // Velocity (starts at natural vertical speed)
-      vx: 0,
-      vy: speed
-    };
-  }
-
-  /* ---------------------------------------------------------
-     STARFIELD INITIALIZATION
-  --------------------------------------------------------- */
-  let stars = [];
 
   function regenerateStars() {
-    const count = computeStarCount();
-    stars = Array.from({ length: count }, generateStar);
+    count = (W * H * CFG.density) | 0;
+
+    xs = new Float32Array(count);
+    ys = new Float32Array(count);
+    vxs = new Float32Array(count);
+    vys = new Float32Array(count);
+    axs = new Float32Array(count);
+    ays = new Float32Array(count);
+    sizes = new Float32Array(count);
+    speeds = new Float32Array(count);
+    colorIndexes = new Uint8Array(count);
+
+    const colorCount = CFG.colors.length;
+    colorBuckets = new Array(colorCount);
+    for (let c = 0; c < colorCount; c++) {
+      colorBuckets[c] = [];
+    }
+
+    for (let i = 0; i < count; i++) {
+      const size = biasedSize();
+      const base = (size - 6.5) * 0.05;
+      const speed = Math.abs(base) < 0.033 ? (base < 0 ? -0.033 : 0.033) : base;
+      const ci = randomColorIndex();
+
+      xs[i] = Math.random() * W;
+      ys[i] = Math.random() * H;
+      vxs[i] = 0;
+      vys[i] = speed;
+      axs[i] = 0;
+      ays[i] = 0;
+      sizes[i] = size;
+      speeds[i] = speed;
+      colorIndexes[i] = ci;
+      colorBuckets[ci].push(i);
+    }
   }
 
   regenerateStars();
 
   window.addEventListener("resize", () => {
-    resize();
+    resizeCanvas();
     regenerateStars();
   });
 
   /* ---------------------------------------------------------
-     MOUSE TRACKING + INACTIVITY LOGIC
-     The attractor only activates when the mouse is moving.
-     When the mouse stops, attraction decays to zero.
+     MOUSE CONTROLLER
   --------------------------------------------------------- */
-  let mouseX = window.innerWidth / 2;
-  let mouseY = window.innerHeight / 2;
-
-  let lastMouseX = mouseX;
-  let lastMouseY = mouseY;
-
-  let lastMoveTime = Date.now();
-  const inactivityMs = 250; // how long before attractor shuts off
+  const mouse = {
+    x: W / 2,
+    y: H / 2,
+    lastMove: performance.now(),
+    pulse: false,
+    pulseEnd: 0
+  };
 
   window.addEventListener("mousemove", (e) => {
-    lastMouseX = mouseX;
-    lastMouseY = mouseY;
-
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-
-    // Only count real movement
-    if (mouseX !== lastMouseX || mouseY !== lastMouseY) {
-      lastMoveTime = Date.now();
-    }
-
-    if (mouseX !== lastMouseX || mouseY !== lastMouseY) {
-      pulseActive = false; // movement cancels pulse
+    const x = e.clientX;
+    const y = e.clientY;
+    if (x !== mouse.x || y !== mouse.y) {
+      mouse.x = x;
+      mouse.y = y;
+      mouse.lastMove = performance.now();
+      mouse.pulse = false;
     }
   });
 
-  // When mouse leaves, kill the attractor immediately
   window.addEventListener("mouseleave", () => {
-    mouseX = window.innerWidth / 2;
-    mouseY = window.innerHeight / 2;
-    lastMoveTime = 0;
+    mouse.x = W / 2;
+    mouse.y = H / 2;
+    mouse.lastMove = 0;
   });
 
-  // Detect the mouse down for the repulsor effect
   window.addEventListener("mousedown", () => {
-    pulseActive = true;
-    pulseEndTime = Date.now() + 250; // 250ms pulse
+    const now = performance.now();
+    mouse.pulse = true;
+    mouse.pulseEnd = now + 250;
   });
 
   /* ---------------------------------------------------------
-     ANIMATION LOOP
+     FIXED TIMESTEP
   --------------------------------------------------------- */
-  function animate() {
-    // Fade only the star layer, preserving the CSS background
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
-    ctx.globalCompositeOperation = "source-over";
+  const STEP_MS = 1000 / 60; // fixed 60 Hz
+  const MAX_FRAME_MS = 1000 / 30;
 
-    const now = Date.now();
-    const attractorActive = now - lastMoveTime < inactivityMs;
+  let accumulator = 0;
+  let lastTime = performance.now();
 
-    // Pulse expires naturally
-    if (pulseActive && Date.now() > pulseEndTime) {
-      pulseActive = false;
-    }
+  /* ---------------------------------------------------------
+     UPDATE
+  --------------------------------------------------------- */
+  function updateFixed() {
+    const nowMs = performance.now();
+    const attract = nowMs - mouse.lastMove < CFG.inactivityMs;
+    if (mouse.pulse && nowMs > mouse.pulseEnd) mouse.pulse = false;
 
-    for (const star of stars) {
-      /* -----------------------------------------------------
-         1. Compute attraction force (only if mouse is moving)
-         Includes distance falloff so far stars barely move.
-      ----------------------------------------------------- */
-      const dx = mouseX - star.x;
-      const dy = mouseY - star.y;
-      const dist = Math.hypot(dx, dy);
+    const mx = mouse.x;
+    const my = mouse.y;
+    const buf = CFG.buffer;
 
-      if (dist > 0) {
-        const ux = dx / dist;
-        const uy = dy / dist;
+    for (let i = 0; i < count; i++) {
+      let x = xs[i];
+      let y = ys[i];
+      let vx = vxs[i];
+      let vy = vys[i];
+      let ax = axs[i];
+      let ay = ays[i];
+      const speed = speeds[i];
 
-        // Distance falloff
-        const falloff = 1 / (dist * dist * 0.00025 + dist * 0.05 + 1);
-        const force = 0.05 * falloff;
+      // Attraction / repulsion
+      const dx = mx - x;
+      const dy = my - y;
+      const distSq = dx * dx + dy * dy;
 
-        // Determine direction:
-        // - If pulse is active → repulsion
-        // - Else if attractor is active → attraction
-        // - Else → no force
-        let direction = 0;
+      if (distSq > 0) {
+        const invDist = 1 / Math.sqrt(distSq);
+        const dist = distSq * invDist; // = sqrt(distSq)
+        const ux = dx * invDist;
+        const uy = dy * invDist;
 
-        if (pulseActive) {
-          direction = -1;
-        } else if (attractorActive) {
-          direction = 1;
+        // Corrected falloff:
+        // fall = 1 / (dist * (dist * 0.00025 + 0.05) + 1);
+        const fall = 1 / (dist * (dist * 0.00025 + 0.05) + 1);
+        const force = 0.05 * fall;
+        const dir = mouse.pulse ? -1 : attract ? 1 : 0;
+
+        if (dir !== 0) {
+          ax += ux * force * dir;
+          ay += uy * force * dir;
         }
-
-        // Apply force only if direction is non-zero
-        if (direction !== 0) {
-          star.ax += ux * force * direction;
-          star.ay += uy * force * direction;
-        }
       }
 
-      /* -----------------------------------------------------
-         2. Apply attraction force to velocity
-      ----------------------------------------------------- */
-      star.vx += star.ax;
-      star.vy += star.ay;
+      // Velocity update
+      vx += ax;
+      vy += ay;
 
-      /* -----------------------------------------------------
-         3. Decay attraction force (so it fades out)
-      ----------------------------------------------------- */
-      star.ax *= 0.99;
-      star.ay *= 0.99;
+      // Decay forces-friction
+      ax *= 0.995;
+      ay *= 0.995;
 
-      if (Math.abs(star.ax) < 0.00005) star.ax = 0;
-      if (Math.abs(star.ay) < 0.00005) star.ay = 0;
+      // Kill tiny forces
+      if (ax < 0.00005 && ax > -0.00005) ax = 0;
+      if (ay < 0.00005 && ay > -0.00005) ay = 0;
 
-      /* -----------------------------------------------------
-         4. Decay velocity back toward natural vertical speed
-         Prevents permanent drift or black-hole collapse.
-      ----------------------------------------------------- */
-      star.vx *= 0.9;
-      star.vy = star.speed + (star.vy - star.speed) * 0.9;
+      // Decay velocity toward natural speed
+      vx *= 0.9;
+      vy = speed + (vy - speed) * 0.9;
 
-      if (Math.abs(star.vx) < 0.01) star.vx = 0;
-      if (Math.abs(star.vy - star.speed) < 0.01) star.vy = star.speed;
+      if (vx < 0.01 && vx > -0.01) vx = 0;
+      if (vy - speed < 0.01 && vy - speed > -0.01) vy = speed;
 
-      /* -----------------------------------------------------
-         5. Apply velocity to position
-      ----------------------------------------------------- */
-      star.x += star.vx;
-      star.y += star.vy;
+      // Position update
+      x += vx;
+      y += vy;
 
-      const buffer = 20;
+      // Wrap
+      if (y < -buf) y = H + buf;
+      else if (y > H + buf) y = -buf;
 
-      // Vertical wrap
-      if (star.y < -buffer) {
-        star.y = window.innerHeight + buffer;
-        star.x = Math.random() * window.innerWidth;
-        star.vx = 0;
-        star.vy = star.speed;
-        star.ax = 0;
-        star.ay = 0;
-      }
+      if (x < -buf) x = W + buf;
+      else if (x > W + buf) x = -buf;
 
-      if (star.y > window.innerHeight + buffer) {
-        star.y = -buffer;
-        star.x = Math.random() * window.innerWidth;
-        star.vx = 0;
-        star.vy = star.speed;
-        star.ax = 0;
-        star.ay = 0;
-      }
-
-      // Horizontal wrap
-      if (star.x < -buffer) {
-        star.x = window.innerWidth + buffer;
-        star.y = Math.random() * window.innerHeight;
-        star.vx = 0;
-        star.vy = star.speed;
-        star.ax = 0;
-        star.ay = 0;
-      }
-
-      if (star.x > window.innerWidth + buffer) {
-        star.x = -buffer;
-        star.y = Math.random() * window.innerHeight;
-        star.vx = 0;
-        star.vy = star.speed;
-        star.ax = 0;
-        star.ay = 0;
-      }
-
-      /* -----------------------------------------------------
-         8. Draw star
-      ----------------------------------------------------- */
-      ctx.fillStyle = star.color;
-      ctx.fillRect(star.x, star.y, star.size, star.size);
+      xs[i] = x;
+      ys[i] = y;
+      vxs[i] = vx;
+      vys[i] = vy;
+      axs[i] = ax;
+      ays[i] = ay;
     }
-
-    requestAnimationFrame(animate);
   }
 
-  animate();
+  /* ---------------------------------------------------------
+     RENDER
+  --------------------------------------------------------- */
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    const colors = CFG.colors;
+    const buckets = colorBuckets;
+
+    for (let c = 0; c < colors.length; c++) {
+      const group = buckets[c];
+      if (!group.length) continue;
+
+      ctx.fillStyle = colors[c];
+
+      // batching draw calls for speedup
+      for (let j = 0; j < group.length; j++) {
+        const i = group[j];
+        ctx.fillRect(xs[i], ys[i], sizes[i], sizes[i]);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------
+     MAIN LOOP (with timesteps)
+  --------------------------------------------------------- */
+  function loop(now) {
+    let frameTime = now - lastTime;
+    if (frameTime > MAX_FRAME_MS) frameTime = MAX_FRAME_MS;
+    lastTime = now;
+
+    accumulator += frameTime;
+
+    while (accumulator >= STEP_MS) {
+      updateFixed();
+      accumulator -= STEP_MS;
+    }
+
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  requestAnimationFrame(loop);
 });
